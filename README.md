@@ -1,473 +1,270 @@
+<div align="center">
+
 # CallSense AI
 
-> AI-powered Call Centre Assistant — transcribe, summarise, score, and route customer support calls automatically.
+**A Multi-Agent, Multimodal AI Assistant for Call Center Analytics**
+
+Turns raw customer support call recordings into structured business insights — transcripts, summaries, sentiment, and quality scorecards — in seconds.
+
+![Python](https://img.shields.io/badge/Python-3.11-blue)
+![LangGraph](https://img.shields.io/badge/LangGraph-Multi--Agent-green)
+![LangChain](https://img.shields.io/badge/LangChain-LLM-orange)
+![OpenAI](https://img.shields.io/badge/OpenAI-GPT--4o-purple)
+![Whisper](https://img.shields.io/badge/OpenAI-Whisper-red)
+![Streamlit](https://img.shields.io/badge/Frontend-Streamlit-ff4b4b)
+![License](https://img.shields.io/badge/License-MIT-lightgrey)
+
+</div>
 
 ---
 
-## Prerequisites
+## Overview
 
-| Requirement | Version |
-|-------------|---------|
-| Python | 3.11+ |
-| pip | latest |
-| OpenAI API Key | required |
+Call centers generate thousands of recorded conversations every day, but reviewing them manually — listening to audio, writing summaries, scoring agent performance — doesn't scale.
 
----
+**CallSense AI** automates that entire review process. Upload a call recording, and a pipeline of specialized AI agents transcribes it, summarizes it, and evaluates the support representative's performance, so supervisors can spend their time acting on insights instead of producing them.
 
-## Python Version
-
-This project requires **Python 3.11**.
-
-Verify your version:
-
-```bash
-python --version
-```
+The system is built as a **modular multi-agent architecture**: each agent owns one responsibility, communicates through shared state, and can be extended or replaced independently.
 
 ---
 
-## Virtual Environment
+## Architecture
 
-### Create
-
-**macOS / Linux**
-```bash
-python3.11 -m venv .venv
-```
-
-**Windows**
-```bash
-python -m venv .venv
-```
-
-### Activate
-
-**macOS / Linux**
-```bash
-source .venv/bin/activate
-```
-
-**Windows**
-```bash
-.venv\Scripts\activate
-```
-
----
-
-## Installing Dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
----
-
-## Creating .env
-
-```bash
-cp .env.example .env
-```
-
-Then open `.env` and fill in your keys:
-
-```
-OPENAI_API_KEY=sk-...
-LANGCHAIN_API_KEY=ls__...        # optional — for LangSmith tracing
-LANGCHAIN_PROJECT=CallSenseAI
-LANGCHAIN_TRACING_V2=false
+```text
+                    Upload Audio
+                         │
+                         ▼
+                 ┌──────────────────┐
+                 │   Intake Agent    │  validates file, extracts metadata
+                 └────────┬──────────┘
+                          │
+              ┌───────────┴───────────┐
+            Valid                  Invalid
+              │                       │
+              ▼                       ▼
+     ┌──────────────────┐      Return Error
+     │  Transcription    │  Whisper: speech → text
+     └────────┬──────────┘
+              ▼
+     ┌──────────────────┐
+     │  Summarization    │  GPT-4o: issue, resolution, sentiment, topics
+     └────────┬──────────┘
+              ▼
+     ┌──────────────────┐
+     │  Quality Score    │  GPT-4o: agent performance scorecard
+     └────────┬──────────┘
+              ▼
+     ┌──────────────────┐
+     │     Routing       │  (upcoming) approve / escalate for review
+     └────────┬──────────┘
+              ▼
+     ┌──────────────────┐
+     │   Streamlit UI    │  transcript · summary · scorecard · routing
+     └──────────────────┘
 ```
 
 ---
 
-## Running the OpenAI Test
+## Features
 
-Verify your API key and GPT-4o connection:
+### Implemented
 
-```bash
-python test_openai.py
-```
+| Agent | Responsibility |
+|---|---|
+| **Intake** | Validates uploaded audio, supports multiple formats, extracts file metadata, handles bad uploads gracefully |
+| **Transcription** | Converts speech to text via OpenAI Whisper, detects language, stores transcript in shared state |
+| **Summarization** | Uses GPT-4o + LangChain/Pydantic structured output to extract the customer issue, resolution, sentiment, action items, and key topics |
+| **Quality Score** | Scores the representative on empathy, professionalism, clarity, problem understanding, resolution quality, and compliance, with strengths, gaps, and detailed QA feedback |
 
-Expected output:
-```
-[SUCCESS] Hello from CallSense AI! ...
-```
+**Shared foundation:** LangGraph state management, Pydantic data validation, a modular service layer, centralized logging, and robust error handling throughout.
 
----
+### Upcoming
 
-## Running Streamlit
-
-```bash
-streamlit run ui/streamlit_app.py
-```
-
-Open [http://localhost:8501](http://localhost:8501) in your browser.
-
----
-
-## Project Structure
-
-```
-CallSense-AI/
-│
-├── agents/                      # Agent implementations (coming soon)
-│   ├── intake_agent.py
-│   ├── transcription_agent.py
-│   ├── summarization_agent.py
-│   ├── quality_score_agent.py
-│   └── routing_agent.py
-│
-├── config/
-│   └── settings.py              # Env-backed Settings class
-│
-├── graph/
-│   ├── state.py                 # CallSenseState TypedDict
-│   └── workflow.py              # LangGraph StateGraph
-│
-├── models/
-│   └── schemas.py               # Pydantic v2 models
-│
-├── prompts/
-│   ├── summary_prompt.py
-│   └── qa_prompt.py
-│
-├── services/
-│   ├── openai_service.py        # GPT-4o wrapper
-│   └── whisper_service.py       # Whisper wrapper
-│
-├── utils/
-│   ├── logger.py
-│   └── validator.py
-│
-├── ui/
-│   └── streamlit_app.py         # Streamlit front-end
-│
-├── data/
-│   ├── audio/
-│   ├── transcripts/
-│   └── outputs/
-│
-├── tests/
-│   ├── test_intake.py
-│   └── test_summary.py
-│
-├── main.py                      # App entry point
-├── test_openai.py               # OpenAI connection test
-├── requirements.txt
-├── .env.example
-└── README.md
-```
-
----
-
-## Phase 3.4 — Quality Score Agent
-
-### Purpose
-
-The Quality Score Agent is the fourth node in the pipeline. It reads the transcript and summary from `CallState`, sends both to GPT-4o via LangChain structured output, and writes a validated `QualityScore` Pydantic model back into `CallState`.
-
-### Input
-
-`CallState` containing `transcript` and `summary` populated by the previous agents.
-
-### Output
-
-On success:
-
-| Field | Value |
-|-------|-------|
-| `quality_score` | Validated `QualityScore` Pydantic model |
-| `status` | `ProcessingStatus.PROCESSING` |
-| `error_message` | `None` |
-| `logs` | Log entry appended |
-
-On failure:
-
-| Field | Value |
-|-------|-------|
-| `status` | `ProcessingStatus.FAILED` |
-| `error_message` | Human-readable description |
-| `logs` | Error entry appended |
-
-### Scoring Rubric
-
-| Dimension | Field | Description |
-|-----------|-------|-------------|
-| Empathy | `empathy_score` | Did the agent acknowledge the customer's emotions? |
-| Professionalism | `professionalism_score` | Was the conversation polite and respectful? |
-| Communication Clarity | `communication_clarity_score` | Were responses clear and easy to understand? |
-| Problem Understanding | `problem_understanding_score` | Did the agent correctly identify the issue? |
-| Resolution Quality | `resolution_quality_score` | Was the issue resolved or properly escalated? |
-| Compliance | `compliance_score` | Did the agent follow standard service practices? |
-| Overall | `overall_score` | Holistic quality of the interaction (1.0–10.0) |
-| Feedback | `feedback` | 2–3 sentence narrative for the representative |
-
-### Prompt Design
-
-The system prompt in `prompts/qa_prompt.py` instructs GPT-4o to act as a Senior Call Center Quality Analyst. It provides the full rubric with per-dimension guidance and strict rules against hallucination. The human message passes the transcript plus three key summary fields (`customer_issue`, `resolution`, `customer_sentiment`) as structured context. LangChain's `with_structured_output(QualityScore)` enforces the schema — no manual JSON parsing.
-
-### Error Handling
-
-| Error | Behaviour |
-|-------|-----------|
-| Empty transcript | `ValueError` → FAILED |
-| Missing transcript | `ValueError` → FAILED |
-| Missing or invalid summary | `ValueError` → FAILED |
-| Invalid API key | `AuthenticationError` → FAILED |
-| API timeout | `APITimeoutError` → FAILED |
-| Network error | `APIConnectionError` → FAILED |
-| Structured output validation | `ValueError` → FAILED |
-| Unexpected error | `RuntimeError` → FAILED |
-
-### How to Test
-
-```bash
-# Unit tests (mocked — no API calls)
-pytest tests/test_quality_score_agent.py -v
-```
-
----
-
-## Phase 3.3 — Summarization Agent
-
-### Purpose
-
-The Summarization Agent is the third node in the pipeline. It reads the transcript from `CallState`, sends it to GPT-4o via LangChain structured output, and writes a validated `CallSummary` Pydantic model back into `CallState`.
-
-### Input
-
-`CallState` containing `transcript` populated by the Transcription Agent.
-
-### Output
-
-On success:
-
-| Field | Value |
-|-------|-------|
-| `summary` | Validated `CallSummary` Pydantic model |
-| `status` | `ProcessingStatus.PROCESSING` |
-| `error_message` | `None` |
-| `logs` | Log entry appended |
-
-On failure:
-
-| Field | Value |
-|-------|-------|
-| `status` | `ProcessingStatus.FAILED` |
-| `error_message` | Human-readable description |
-| `logs` | Error entry appended |
-
-### Prompt Design
-
-The system prompt instructs GPT-4o to act as a call centre quality analyst and extract six structured fields. LangChain's `with_structured_output(CallSummary)` enforces the schema — no manual JSON parsing.
-
-### Structured Output
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `summary` | `str` | One-sentence overview |
-| `customer_issue` | `str` | Primary issue raised |
-| `resolution` | `str` | How it was resolved |
-| `action_items` | `List[str]` | Follow-up tasks |
-| `customer_sentiment` | `str` | positive / neutral / negative / frustrated |
-| `key_topics` | `List[str]` | Main topics discussed |
-
-### Error Handling
-
-| Error | Behaviour |
-|-------|-----------|
-| Empty transcript | `ValueError` → FAILED |
-| Missing transcript | `ValueError` → FAILED |
-| Invalid API key | `AuthenticationError` → FAILED |
-| API timeout | `APITimeoutError` → FAILED |
-| Network error | `APIConnectionError` → FAILED |
-| Structured output validation | `ValueError` → FAILED |
-| Unexpected error | `RuntimeError` → FAILED |
-
-### How to Test
-
-```bash
-# Unit tests (mocked — no API calls)
-pytest tests/test_summarization_agent.py -v
-```
-
----
-
-## Phase 3.2 — Transcription Agent
-
-### Purpose
-
-The Transcription Agent is the second node in the pipeline. It reads the validated audio file from `CallState`, sends it to the OpenAI Whisper API, and writes the plain text transcript back into `CallState`.
-
-### Input
-
-`CallState` containing `audio_path` and `metadata` populated by the Intake Agent.
-
-### Output
-
-On success:
-
-| Field | Value |
-|-------|-------|
-| `transcript` | Full plain-text transcript |
-| `metadata.language` | Detected language (`en`) |
-| `status` | `ProcessingStatus.PROCESSING` |
-| `error_message` | `None` |
-| `logs` | Log entry appended |
-
-On failure:
-
-| Field | Value |
-|-------|-------|
-| `status` | `ProcessingStatus.FAILED` |
-| `error_message` | Human-readable description |
-| `logs` | Error entry appended |
-
-### Dependencies
-
-| Component | Detail |
-|-----------|--------|
-| `WhisperService` | Wraps the OpenAI `whisper-1` API endpoint |
-| `OPENAI_API_KEY` | Must be set in `.env` |
-
-### Error Handling
-
-| Error | Behaviour |
-|-------|-----------|
-| File not found | `FileNotFoundError` → FAILED |
-| Empty file | `ValueError` → FAILED |
-| Empty transcript | `ValueError` → FAILED |
-| Invalid API key | `AuthenticationError` → FAILED |
-| API timeout | `APITimeoutError` → FAILED |
-| Network error | `APIConnectionError` → FAILED |
-| Unexpected error | `RuntimeError` → FAILED |
-
-### How to Test
-
-```bash
-# Unit tests (mocked — no API calls)
-pytest tests/test_transcription_agent.py -v
-
-# Full pipeline test (requires real audio file + API key)
-python test_intake_manual.py
-```
-
----
-
-## Phase 3.1 — Call Intake Agent
-
-### Purpose
-
-The Call Intake Agent is the first node in the pipeline. It validates the uploaded audio file and extracts file metadata before any AI processing begins. It does not call OpenAI or Whisper.
-
-### Input
-
-`CallState` containing `audio_path` — the path to the uploaded audio file.
-
-```python
-state = {"audio_path": "data/audio/customer_call.mp3", "logs": []}
-```
-
-### Output
-
-A partial `CallState` update merged by LangGraph.
-
-On success:
-
-| Field | Value |
-|-------|-------|
-| `metadata` | Populated `CallMetadata` model |
-| `status` | `ProcessingStatus.PROCESSING` |
-| `error_message` | `None` |
-| `logs` | Log entry appended |
-
-On failure:
-
-| Field | Value |
-|-------|-------|
-| `status` | `ProcessingStatus.FAILED` |
-| `error_message` | Human-readable explanation |
-| `logs` | Error entry appended |
-
-### Validation Rules
-
-| Check | Behaviour on failure |
-|-------|---------------------|
-| File exists | `FileNotFoundError` → FAILED |
-| Supported extension | `ValueError` → FAILED |
-| File not empty | `ValueError` → FAILED |
-| `audio_path` not blank | `ValueError` → FAILED |
-
-Supported formats: `.mp3` `.wav` `.m4a` `.flac`
-
-### Metadata Extracted
-
-- `file_name` — original filename
-- `file_type` — extension without dot (e.g. `mp3`)
-- `file_size_bytes` — size in bytes
-- `uploaded_at` — file creation time (UTC)
-- `duration_seconds` — set to `0.0`, populated later by TranscriptionAgent
-- `language` — set to `None`, detected later by TranscriptionAgent
-
----
-
-## Phase 2 — Data Models & Application State
-
-### What is Pydantic?
-
-Pydantic is a Python library for data validation using type hints. When you create a Pydantic model, every field is validated at instantiation — wrong types, missing required fields, or out-of-range values raise a `ValidationError` immediately, before any business logic runs.
-
-### Why Structured Models?
-
-Without shared models, agents would pass raw dicts with no guarantees about shape or types. Pydantic models give us:
-
-- Automatic validation — bad data is caught at the boundary, not deep inside an agent
-- Clear contracts — every agent knows exactly what fields it will receive and must produce
-- Serialisation — models convert cleanly to/from JSON for logging and storage
-- IDE support — full autocomplete and type checking across the codebase
-
-### What is LangGraph State?
-
-LangGraph is a framework for building stateful multi-agent workflows as directed graphs. Each node in the graph is an agent function. Between nodes, LangGraph passes a single shared state object — `CallState` — and merges any updates the node returns back into that state.
-
-`CallState` is defined as a `TypedDict` so that:
-- LangGraph can serialise and checkpoint it natively
-- Every field is typed and discoverable
-- Agents can read only what they need and write only what they produce
-
-### How Agents Communicate via CallState
-
-```
-IntakeAgent        writes → metadata, audio_path, status
-       ↓ CallState
-TranscriptionAgent reads  → audio_path       writes → transcript
-       ↓ CallState
-SummarizationAgent reads  → transcript       writes → summary
-       ↓ CallState
-QualityScoreAgent  reads  → transcript, summary    writes → quality_score
-       ↓ CallState
-RoutingAgent       reads  → summary, quality_score writes → routing_decision, status
-```
-
-Each agent receives the full `CallState`, does its work, and returns only the fields it updated. LangGraph merges those updates and passes the enriched state to the next node.
+Routing agent · full LangGraph orchestration · interactive Streamlit dashboard · Docker deployment · LangSmith tracing · speaker diarization · multi-language support · intent classification · PDF report export · call search & filtering.
 
 ---
 
 ## Tech Stack
 
-| Component | Library |
-|-----------|---------|
+| Category | Technology |
+|---|---|
 | Language | Python 3.11 |
-| Agent orchestration | LangGraph |
-| LLM framework | LangChain + langchain-openai |
+| AI Framework | LangChain |
+| Multi-Agent Framework | LangGraph |
 | LLM | OpenAI GPT-4o |
-| Speech-to-text | OpenAI Whisper |
-| Data validation | Pydantic v2 |
-| UI | Streamlit |
-| Config | python-dotenv |
-| Token counting | tiktoken |
+| Speech-to-Text | OpenAI Whisper |
+| Data Validation | Pydantic |
+| Frontend | Streamlit |
+| Config | YAML + environment variables |
+| Testing | PyTest |
+| Logging | Python `logging` |
 
 ---
 
+## Project Structure
+
+```text
+CallSense-AI/
+├── agents/
+│   ├── intake_agent.py
+│   ├── transcription_agent.py
+│   ├── summarization_agent.py
+│   ├── quality_score_agent.py
+│   └── routing_agent.py
+├── config/
+│   └── settings.py
+├── data/
+│   ├── audio/
+│   ├── transcripts/
+│   └── outputs/
+├── graph/
+│   ├── state.py
+│   └── workflow.py
+├── models/
+│   └── schemas.py
+├── prompts/
+│   ├── summary_prompt.py
+│   └── qa_prompt.py
+├── services/
+│   ├── openai_service.py
+│   └── whisper_service.py
+├── ui/
+│   └── streamlit_app.py
+├── tests/
+├── utils/
+├── main.py
+├── requirements.txt
+└── README.md
+```
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- Python 3.11+
+- An OpenAI API key
+
+### Setup
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/<your-github-username>/CallSense-AI.git
+cd CallSense-AI
+
+# 2. Create and activate a virtual environment
+python3.11 -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+
+# 3. Install dependencies
+pip install -r requirements.txt
+
+# 4. Configure environment variables
+cp .env.example .env
+```
+
+Then edit `.env`:
+
+```text
+OPENAI_API_KEY=your_openai_api_key
+LANGCHAIN_API_KEY=your_langsmith_key
+LANGCHAIN_PROJECT=CallSenseAI
+LANGCHAIN_TRACING_V2=false
+```
+
+### Verify & Run
+
+```bash
+# Confirm your OpenAI connection
+python test_openai.py
+# Expected: [SUCCESS] OpenAI Connected Successfully
+
+# Launch the app
+streamlit run ui/streamlit_app.py
+```
+
+Then open **http://localhost:8501**.
+
+---
+
+## Example
+
+**Call transcript**
+
+> **Customer:** Hello, I haven't received my refund.
+> **Agent:** I'm sorry about the delay. I've initiated your refund and it will be credited within three business days.
+> **Customer:** Thank you.
+
+**AI-generated summary**
+
+| Field | Output |
+|---|---|
+| **Summary** | Customer reported a delayed refund; agent apologized, confirmed the refund was initiated, and gave a three-business-day timeline. |
+| **Issue** | Refund not received |
+| **Resolution** | Refund initiated; expected within 3 business days |
+| **Action Items** | Wait up to 3 business days; follow up with support if not received |
+| **Sentiment** | 🟡 Neutral |
+| **Key Topics** | Refund, Payment, Customer Support |
+
+**Quality scorecard**
+
+| Metric | Score |
+|---|:---:|
+| Empathy | 9/10 |
+| Professionalism | 10/10 |
+| Communication Clarity | 9/10 |
+| Problem Understanding | 10/10 |
+| Resolution Quality | 9/10 |
+| Compliance | 9/10 |
+| **Overall Score** | **9.3/10** |
+
+- **Strengths:** strong empathy, professional tone, clear timeline, effective resolution.
+- **Areas for improvement:** offer proactive status updates; share a reference number for follow-up.
+- **Feedback:** the representative handled the interaction professionally and empathetically, correctly identified the issue, and communicated a realistic resolution timeline — meeting expected service standards.
+
+---
+
+## Roadmap
+
+| Phase | Focus |
+|---|---|
+| **4** | Connect all agents via LangGraph, state-based orchestration, conditional routing, workflow visualization |
+| **5** | Interactive Streamlit dashboard — audio upload, transcript viewer, summary & QA dashboards, routing decisions |
+| **6** | Docker deployment, LangSmith tracing, end-to-end testing, CI/CD, performance monitoring |
+| **Beyond** | Speaker diarization, multi-language support, intent classification, supervisor analytics, call search, PDF export, email notifications, human review queue |
+
+**Current status:** setup, OpenAI integration, Pydantic models, LangGraph state, and the Intake/Transcription/Summarization/Quality Score agents are complete. Routing, full workflow orchestration, the dashboard, and deployment are in progress.
+
+---
+
+## Key Learnings
+
+Building CallSense AI involved hands-on work with:
+
+- Designing modular multi-agent AI systems and state-driven workflows with LangGraph
+- Integrating OpenAI Whisper for speech-to-text and GPT-4o for structured summarization and evaluation
+- Building reliable data contracts with Pydantic and structured outputs with LangChain
+- Designing production-ready service layers with clean logging, validation, and error handling
+
+---
+
+## Contributing
+
+Contributions are welcome — bug reports, feature suggestions, documentation improvements, and pull requests all help.
+
 ## License
 
-MIT © 2024 CallSense-AI
+Licensed under the [MIT License](LICENSE).
+
+## Author
+
+**Shubhi Singla**
+
+---
+
+<div align="center">
+
+⭐ If this project helped you, consider giving it a star on GitHub!
+
+</div>
