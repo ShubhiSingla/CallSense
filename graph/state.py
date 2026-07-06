@@ -19,6 +19,7 @@ from models.schemas import (
     ProcessingStatus,
     QualityScore,
     RoutingDecision,
+    RoutingOutcome,
 )
 
 

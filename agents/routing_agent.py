@@ -1,53 +1,58 @@
 """
 agents/routing_agent.py
------------------------
-Routing Agent — the final decision-maker in the CallSense-AI pipeline.
+------------------------
+Routing Agent — the fifth and final node in the CallSense-AI pipeline.
 
-Responsibilities
-----------------
-- Receive the summary and QA score from the state.
-- Apply rule-based pre-checks (e.g. very low QA score → escalate).
-- Invoke ``OpenAIService.decide_routing()`` for nuanced decisions.
-- Store the routing decision dict in the state.
-- Mark the call status as ``"completed"`` or ``"escalated"``.
-- Handle errors gracefully and set ``state["error"]``.
+Reads the summary and quality_score from CallState and applies
+deterministic business rules to produce a RoutingDecision.
 
-This agent is the terminal processing node before the Streamlit UI
-receives the final result.
+No LLM is used. All decisions are rule-based.
 """
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
-from config.settings import settings
 from graph.state import CallState
-from services.openai_service import OpenAIService
+from models.schemas import (
+    CallSummary,
+    ProcessingStatus,
+    QualityScore,
+    RoutingDecision,
+    RoutingOutcome,
+)
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# QA score below this value triggers an immediate escalation
-# without consulting the LLM, saving API cost.
-_HARD_ESCALATION_THRESHOLD: float = 3.0
+# ── Routing rule thresholds ────────────────────────────────────────────────────
+
+_COMPLETED_MIN_SCORE: float = 9.0
+_MANUAL_QA_MIN_SCORE: float = 7.0
+_COMPLIANCE_MAX_SCORE: float = 5.0
+_ESCALATE_MAX_RESOLUTION: float = 6.0
+
+# Human-readable team names per outcome
+_NEXT_AGENT: dict[RoutingOutcome, str] = {
+    RoutingOutcome.COMPLETED: "None — call closed",
+    RoutingOutcome.MANUAL_QA_REVIEW: "QA Team",
+    RoutingOutcome.SUPERVISOR_REVIEW: "Supervisor",
+    RoutingOutcome.ESCALATE: "Escalation Team",
+    RoutingOutcome.COMPLIANCE_REVIEW: "Compliance Team",
+    RoutingOutcome.CUSTOMER_FOLLOW_UP: "Customer Success Team",
+}
 
 
 class RoutingAgent:
     """
-    Determines the next action for a completed call.
+    Applies deterministic business rules to route a completed call.
 
-    Routing decisions include: resolved, escalate to human agent,
-    escalate to supervisor, schedule callback, or send follow-up email.
-
-    Parameters
-    ----------
-    openai_service : OpenAIService | None
-        Optional pre-built service instance. When ``None`` a new
-        ``OpenAIService`` is created using default settings.
+    No external services or LLMs are used — all decisions are derived
+    from the ``QualityScore`` and ``CallSummary`` already in ``CallState``.
     """
 
-    def __init__(self, openai_service: OpenAIService | None = None) -> None:
-        self._openai = openai_service or OpenAIService()
+    def __init__(self) -> None:
         logger.debug("RoutingAgent initialised.")
 
     # ------------------------------------------------------------------ #
@@ -56,152 +61,254 @@ class RoutingAgent:
 
     def execute(self, state: CallState) -> dict[str, Any]:
         """
-        Determine the routing action for the call in *state*.
+        Determine the routing decision for the call in *state*.
 
         Parameters
         ----------
         state : CallState
-            Current graph state. Must contain ``"summary"`` and
-            ``"qa_score"``.
+            Must contain ``summary`` and ``quality_score``.
 
         Returns
         -------
         dict[str, Any]
-            Partial state update dict.
-            On success: ``routing_decision`` (dict), ``status``.
-            On failure: ``error``, ``status``.
+            Partial state update merged by LangGraph.
+            On success: ``routing_decision``, ``status``, ``error_message``, ``logs``.
+            On failure: ``status``, ``error_message``, ``logs``.
         """
-        logger.info(
-            "RoutingAgent.execute() — call_id=%s", state.get("call_id")
-        )
+        logs: list[str] = list(state.get("logs", []))
+        logger.info("RoutingAgent.execute() started.")
 
         try:
-            summary = state.get("summary", {})
-            qa_score = state.get("qa_score", {})
-
-            self._validate_inputs(summary, qa_score)
-
-            # Fast-path: hard escalation for very low QA scores
-            if self._requires_hard_escalation(qa_score):
-                decision = self._build_hard_escalation_decision(qa_score)
-            else:
-                decision = self._llm_routing_decision(summary, qa_score)
-
-            final_status = self._determine_final_status(decision)
-
-            logger.info(
-                "Routing complete — decision=%s, status=%s",
-                decision.get("decision"),
-                final_status,
-            )
-            return {
-                "routing_decision": decision,
-                "status": final_status,
-                "error": None,
-            }
+            summary, quality_score = self._validate_input(state)
+            routing_decision, elapsed = self._determine_route(summary, quality_score)
+            return self._update_state(routing_decision, logs, elapsed)
 
         except Exception as exc:
             logger.error("RoutingAgent failed: %s", exc, exc_info=True)
-            return {"status": "failed", "error": str(exc)}
+            logs.append(f"[RoutingAgent] ERROR: {exc}")
+            return {
+                "status": ProcessingStatus.FAILED,
+                "error_message": str(exc),
+                "logs": logs,
+            }
 
     # ------------------------------------------------------------------ #
     # Private helpers
     # ------------------------------------------------------------------ #
 
-    def _validate_inputs(
-        self, summary: dict[str, Any], qa_score: dict[str, Any]
-    ) -> None:
+    def _validate_input(
+        self, state: CallState
+    ) -> tuple[CallSummary, QualityScore]:
         """
-        Ensure summary and qa_score are present before routing.
+        Validate that summary and quality_score are present in state.
+
+        Parameters
+        ----------
+        state : CallState
+            Current pipeline state.
+
+        Returns
+        -------
+        tuple[CallSummary, QualityScore]
+            Validated summary and quality score.
 
         Raises
         ------
         ValueError
-            If either input is empty.
+            If either field is missing or of the wrong type.
         """
-        # TODO: Raise ValueError if summary is empty.
-        # TODO: Raise ValueError if qa_score is empty.
-        raise NotImplementedError("_validate_inputs() is not yet implemented.")
+        summary = state.get("summary")
+        if not isinstance(summary, CallSummary):
+            raise ValueError(
+                "Summary is missing or invalid. "
+                "Ensure the Summarization Agent ran successfully."
+            )
 
-    def _requires_hard_escalation(self, qa_score: dict[str, Any]) -> bool:
+        quality_score = state.get("quality_score")
+        if not isinstance(quality_score, QualityScore):
+            raise ValueError(
+                "Quality score is missing or invalid. "
+                "Ensure the Quality Score Agent ran successfully."
+            )
+
+        logger.debug(
+            "Input validated — overall_score=%.1f, sentiment=%s.",
+            quality_score.overall_score,
+            summary.customer_sentiment,
+        )
+        return summary, quality_score
+
+    def _determine_route(
+        self, summary: CallSummary, qs: QualityScore
+    ) -> tuple[RoutingDecision, float]:
         """
-        Return ``True`` if the QA score is so low that immediate escalation
-        is warranted without consulting the LLM.
+        Apply business rules and return a RoutingDecision with elapsed time.
+
+        Rules are evaluated in priority order — the first matching rule wins.
 
         Parameters
         ----------
-        qa_score : dict[str, Any]
-            Validated QA score dict.
+        summary : CallSummary
+            Validated summary from the Summarization Agent.
+        qs : QualityScore
+            Validated quality score from the Quality Score Agent.
 
         Returns
         -------
-        bool
+        tuple[RoutingDecision, float]
+            The routing decision and elapsed seconds.
         """
-        # TODO: return qa_score.get("overall_score", 10.0) < _HARD_ESCALATION_THRESHOLD
-        raise NotImplementedError(
-            "_requires_hard_escalation() is not yet implemented."
+        start = time.perf_counter()
+
+        overall = qs.overall_score
+        sentiment = summary.customer_sentiment.lower()
+        resolution_quality = qs.resolution_quality_score
+        compliance = qs.compliance_score
+        resolution_text = summary.resolution.lower()
+
+        logger.info(
+            "Routing evaluation — overall_score=%.1f, sentiment=%s, "
+            "resolution_quality=%.1f, compliance=%.1f.",
+            overall, sentiment, resolution_quality, compliance,
         )
 
-    def _build_hard_escalation_decision(
-        self, qa_score: dict[str, Any]
-    ) -> dict[str, Any]:
+        outcome, reason = self._apply_rules(
+            overall, sentiment, resolution_quality, compliance, resolution_text
+        )
+
+        elapsed = time.perf_counter() - start
+        logger.info(
+            "Routing decision — outcome=%s, elapsed=%.4fs.", outcome.value, elapsed
+        )
+
+        decision = RoutingDecision(
+            outcome=outcome,
+            next_agent=_NEXT_AGENT[outcome],
+            reason=reason,
+        )
+        return decision, elapsed
+
+    @staticmethod
+    def _apply_rules(
+        overall: float,
+        sentiment: str,
+        resolution_quality: float,
+        compliance: float,
+        resolution_text: str,
+    ) -> tuple[RoutingOutcome, str]:
         """
-        Build a pre-canned escalation decision dict without calling the LLM.
+        Evaluate all routing rules in priority order and return the first match.
+
+        Priority order:
+          1. Compliance Review  (compliance failure is highest risk)
+          2. Escalation         (negative sentiment + poor resolution)
+          3. Customer Follow-up (pending resolution)
+          4. Supervisor Review  (low overall score)
+          5. Manual QA Review   (mid-range overall score)
+          6. Completed          (high score + positive/neutral sentiment)
 
         Parameters
         ----------
-        qa_score : dict[str, Any]
-            QA score dict that triggered the hard escalation.
+        overall : float
+            Overall quality score.
+        sentiment : str
+            Lowercased customer sentiment string.
+        resolution_quality : float
+            Resolution quality score.
+        compliance : float
+            Compliance score.
+        resolution_text : str
+            Lowercased resolution field from the summary.
 
         Returns
         -------
-        dict[str, Any]
-            Routing decision dict matching ``models.schemas.RoutingDecision``.
+        tuple[RoutingOutcome, str]
+            Matched outcome and human-readable reason.
         """
-        # TODO: Return a dict with decision="escalate_supervisor", priority=5,
-        #       and a reason explaining the low QA score.
-        raise NotImplementedError(
-            "_build_hard_escalation_decision() is not yet implemented."
+        # Rule 5 — Compliance Review (highest priority)
+        if compliance <= _COMPLIANCE_MAX_SCORE:
+            return (
+                RoutingOutcome.COMPLIANCE_REVIEW,
+                f"Compliance score is {compliance:.1f}/10, which is at or below the "
+                f"acceptable threshold of {_COMPLIANCE_MAX_SCORE:.0f}/10. "
+                "This call requires immediate compliance review.",
+            )
+
+        # Rule 4 — Escalation
+        if sentiment in ("negative", "frustrated") and resolution_quality <= _ESCALATE_MAX_RESOLUTION:
+            return (
+                RoutingOutcome.ESCALATE,
+                f"Customer sentiment is {sentiment} and the resolution quality score "
+                f"is {resolution_quality:.1f}/10, indicating the issue was not "
+                "adequately resolved. Escalation is required.",
+            )
+
+        # Rule 6 — Customer Follow-up
+        if "pending" in resolution_text:
+            return (
+                RoutingOutcome.CUSTOMER_FOLLOW_UP,
+                "The call resolution is marked as pending. "
+                "A follow-up with the customer is required to close the issue.",
+            )
+
+        # Rule 3 — Supervisor Review
+        if overall < _MANUAL_QA_MIN_SCORE:
+            return (
+                RoutingOutcome.SUPERVISOR_REVIEW,
+                f"Overall quality score is {overall:.1f}/10, which is below the "
+                f"acceptable threshold of {_MANUAL_QA_MIN_SCORE:.0f}/10. "
+                "This call requires supervisor review.",
+            )
+
+        # Rule 2 — Manual QA Review
+        if overall < _COMPLETED_MIN_SCORE:
+            return (
+                RoutingOutcome.MANUAL_QA_REVIEW,
+                f"Overall quality score is {overall:.1f}/10. "
+                "The call meets minimum standards but requires manual QA review "
+                "before it can be marked as completed.",
+            )
+
+        # Rule 1 — Completed
+        return (
+            RoutingOutcome.COMPLETED,
+            f"Overall quality score is {overall:.1f}/10 and customer sentiment is "
+            f"{sentiment}. The call was handled to a high standard and is marked "
+            "as completed.",
         )
 
-    def _llm_routing_decision(
+    def _update_state(
         self,
-        summary: dict[str, Any],
-        qa_score: dict[str, Any],
+        routing_decision: RoutingDecision,
+        logs: list[str],
+        elapsed: float,
     ) -> dict[str, Any]:
         """
-        Ask GPT-4o to determine the routing action.
+        Build the partial state update on successful routing.
 
         Parameters
         ----------
-        summary : dict[str, Any]
-            Structured call summary.
-        qa_score : dict[str, Any]
-            QA score dict.
+        routing_decision : RoutingDecision
+            The determined routing decision.
+        logs : list[str]
+            Accumulated log entries.
+        elapsed : float
+            Time taken to determine the route in seconds.
 
         Returns
         -------
         dict[str, Any]
-            Routing decision dict from the LLM.
+            Partial state update for LangGraph to merge.
         """
-        logger.debug("Calling OpenAIService.decide_routing().")
-        # TODO: return self._openai.decide_routing(summary, qa_score)
-        raise NotImplementedError("_llm_routing_decision() is not yet implemented.")
-
-    def _determine_final_status(self, decision: dict[str, Any]) -> str:
-        """
-        Map a routing decision to a final call status string.
-
-        Parameters
-        ----------
-        decision : dict[str, Any]
-            Routing decision dict.
-
-        Returns
-        -------
-        str
-            One of ``"completed"`` or ``"escalated"``.
-        """
-        # TODO: Return "escalated" if decision["decision"] starts with "escalate",
-        #       otherwise return "completed".
-        raise NotImplementedError("_determine_final_status() is not yet implemented.")
+        logs.append(
+            f"[RoutingAgent] Routing completed — "
+            f"outcome={routing_decision.outcome.value}, "
+            f"next_agent='{routing_decision.next_agent}', "
+            f"elapsed={elapsed:.4f}s"
+        )
+        return {
+            "routing_decision": routing_decision,
+            "status": ProcessingStatus.COMPLETED,
+            "error_message": None,
+            "logs": logs,
+        }
