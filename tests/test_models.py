@@ -117,11 +117,21 @@ class TestQualityScore:
     def test_valid_creation(self):
         q = QualityScore(
             empathy_score=8.0,
+            empathy_reason="Agent apologised for the inconvenience.",
             professionalism_score=9.0,
-            resolution_score=7.5,
+            professionalism_reason="Tone was polite throughout.",
+            communication_clarity_score=8.5,
+            communication_clarity_reason="Explanations were clear and concise.",
+            problem_understanding_score=9.0,
+            problem_understanding_reason="Issue was identified immediately.",
+            resolution_quality_score=7.5,
+            resolution_quality_reason="Issue resolved with a clear next step.",
             compliance_score=9.5,
+            compliance_reason="All standard practices were followed.",
             overall_score=8.5,
-            feedback="Good call.",
+            strengths=["Clear communication", "Empathetic tone"],
+            improvement_areas=["Could confirm resolution more explicitly."],
+            overall_feedback="Good call.",
         )
         assert q.overall_score == 8.5
 
@@ -129,22 +139,42 @@ class TestQualityScore:
         with pytest.raises(ValidationError):
             QualityScore(
                 empathy_score=11.0,
+                empathy_reason="Too high.",
                 professionalism_score=9.0,
-                resolution_score=7.5,
+                professionalism_reason="Fine.",
+                communication_clarity_score=8.5,
+                communication_clarity_reason="Fine.",
+                problem_understanding_score=9.0,
+                problem_understanding_reason="Fine.",
+                resolution_quality_score=7.5,
+                resolution_quality_reason="Fine.",
                 compliance_score=9.5,
+                compliance_reason="Fine.",
                 overall_score=8.5,
-                feedback="Good call.",
+                strengths=["Good"],
+                improvement_areas=["Improve X."],
+                overall_feedback="Good call.",
             )
 
     def test_score_below_min_fails(self):
         with pytest.raises(ValidationError):
             QualityScore(
                 empathy_score=-1.0,
+                empathy_reason="Too low.",
                 professionalism_score=9.0,
-                resolution_score=7.5,
+                professionalism_reason="Fine.",
+                communication_clarity_score=8.5,
+                communication_clarity_reason="Fine.",
+                problem_understanding_score=9.0,
+                problem_understanding_reason="Fine.",
+                resolution_quality_score=7.5,
+                resolution_quality_reason="Fine.",
                 compliance_score=9.5,
+                compliance_reason="Fine.",
                 overall_score=8.5,
-                feedback="Good call.",
+                strengths=["Good"],
+                improvement_areas=["Improve X."],
+                overall_feedback="Good call.",
             )
 
 

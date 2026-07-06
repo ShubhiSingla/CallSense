@@ -1,84 +1,93 @@
 """
 prompts/qa_prompt.py
 --------------------
-Prompt templates used by the QualityScoreAgent.
-
-Scoring criteria are embedded in the system prompt so the LLM
-evaluates every call against the same rubric consistently.
+Prompt template for the QualityScoreAgent.
 """
 
-from langchain_core.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 
-# ------------------------------------------------------------------ #
-# System instruction
-# ------------------------------------------------------------------ #
+QA_PROMPT: ChatPromptTemplate = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            """You are a Senior Call Center Quality Analyst producing a professional QA Score Card \
+for a customer support interaction. Evaluate the support representative objectively and \
+thoroughly based solely on the transcript and summary provided.
 
-QA_SYSTEM_TEMPLATE: str = """
-You are a senior call centre quality assurance evaluator.
-Your task is to score a customer support call based on the transcript
-and summary provided.
+Score each of the six dimensions from 1.0 to 10.0 using this scale:
+  10   = Excellent
+  8–9  = Good
+  6–7  = Average
+  <6   = Needs Improvement
 
-Scoring Rubric (each dimension is scored 0.0 – 10.0):
+For every dimension provide:
+  - A numeric score
+  - A concise one-to-two sentence reason that cites specific evidence from the transcript
 
-1. empathy_score
-   - Did the agent acknowledge the customer's feelings?
-   - Did the agent use empathetic language?
+Dimensions to evaluate:
 
-2. resolution_score
-   - Was the customer's issue fully resolved?
-   - If not, was a clear next step provided?
+1. empathy_score / empathy_reason
+   Did the representative acknowledge the customer's emotions?
+   Did they apologise, express concern, or use empathetic language?
 
-3. communication_score
-   - Was the agent clear, professional, and concise?
-   - Were there unnecessary filler words or confusion?
+2. professionalism_score / professionalism_reason
+   Was the conversation polite, respectful, and professional throughout?
+   Did the representative remain composed and courteous?
 
-4. compliance_passed (boolean)
-   - Did the agent use required opening/closing phrases?
-   - Were data protection / privacy statements made where required?
+3. communication_clarity_score / communication_clarity_reason
+   Were responses clear, concise, and free of jargon?
+   Was the customer left with a clear understanding of next steps?
 
-Compute overall_score as the average of the three numeric dimensions.
+4. problem_understanding_score / problem_understanding_reason
+   Did the representative correctly identify the customer's primary issue?
+   Did they confirm their understanding before acting?
 
-Return your response as valid JSON matching the schema below.
+5. resolution_quality_score / resolution_quality_reason
+   Was the issue fully resolved during the call?
+   If not, was a clear and actionable next step provided?
 
-JSON Schema:
-{{
-  "overall_score": <float 0.0–10.0>,
-  "empathy_score": <float 0.0–10.0>,
-  "resolution_score": <float 0.0–10.0>,
-  "communication_score": <float 0.0–10.0>,
-  "compliance_passed": <true | false>,
-  "feedback": "<narrative feedback for the agent>"
-}}
-""".strip()
+6. compliance_score / compliance_reason
+   Did the representative follow standard customer service practices?
+   Did they use appropriate opening/closing phrases and handle the interaction correctly?
 
-# ------------------------------------------------------------------ #
-# Human / user message
-# ------------------------------------------------------------------ #
+Then provide:
 
-QA_HUMAN_TEMPLATE: str = """
+7. overall_score
+   A holistic score (1.0–10.0) reflecting the weighted quality of the entire interaction.
+
+8. strengths
+   A list of 2–4 specific strengths the representative demonstrated.
+   Each item should be a short, concrete phrase (e.g. "Acknowledged customer frustration immediately").
+
+9. improvement_areas
+   A list of 1–3 specific, actionable areas for improvement.
+   Each item should be a short, concrete phrase (e.g. "Could proactively confirm refund timeline").
+
+10. overall_feedback
+    A concise paragraph (2–3 sentences) summarising the representative's overall performance.
+    Address it to a supervisor reviewing the call.
+
+Strict rules:
+- Base every score and reason only on evidence present in the transcript.
+- Do NOT hallucinate or infer information not in the transcript.
+- All scores must be between 1.0 and 10.0.
+- strengths and improvement_areas must each contain at least one item.""",
+        ),
+        (
+            "human",
+            """Evaluate the following customer support call and return a complete QA Score Card.
+
 Transcript:
 ---
 {transcript}
 ---
 
-Summary:
+Call Summary:
 ---
-{summary}
----
-
-Please evaluate this call and return the QA score JSON.
-""".strip()
-
-# ------------------------------------------------------------------ #
-# Assembled ChatPromptTemplate
-# ------------------------------------------------------------------ #
-
-QA_PROMPT: ChatPromptTemplate = ChatPromptTemplate.from_messages(
-    [
-        SystemMessagePromptTemplate.from_template(QA_SYSTEM_TEMPLATE),
-        HumanMessagePromptTemplate.from_template(QA_HUMAN_TEMPLATE),
+Customer Issue: {customer_issue}
+Resolution: {resolution}
+Customer Sentiment: {customer_sentiment}
+---""",
+        ),
     ]
 )
-
-# TODO: Introduce per-client rubric overrides loaded from config.
-# TODO: Add a calibration prompt that aligns scores with human raters.

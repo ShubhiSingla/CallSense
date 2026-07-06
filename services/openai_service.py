@@ -16,8 +16,9 @@ import openai
 from langchain_openai import ChatOpenAI
 
 from config.settings import settings
-from models.schemas import CallSummary
+from models.schemas import CallSummary, QualityScore
 from prompts.summary_prompt import SUMMARY_PROMPT
+from prompts.qa_prompt import QA_PROMPT
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -104,3 +105,80 @@ class OpenAIService:
             elapsed,
         )
         return summary
+
+    def generate_quality_score(
+        self, transcript: str, summary: CallSummary
+    ) -> QualityScore:
+        """
+        Evaluate a support call and return a structured QualityScore.
+
+        Uses LangChain's with_structured_output() to return a validated
+        QualityScore Pydantic model directly — no JSON parsing needed.
+
+        Parameters
+        ----------
+        transcript : str
+            Raw transcript text from the TranscriptionAgent.
+        summary : CallSummary
+            Structured summary produced by the SummarizationAgent.
+
+        Returns
+        -------
+        QualityScore
+            Validated Pydantic model populated by GPT-4o.
+
+        Raises
+        ------
+        ValueError
+            If the transcript is empty.
+        openai.AuthenticationError
+            If the API key is invalid.
+        openai.APITimeoutError
+            If the request times out.
+        openai.APIConnectionError
+            If a network error occurs.
+        RuntimeError
+            For any other unexpected API failure.
+        """
+        if not transcript or not transcript.strip():
+            raise ValueError("Transcript is empty — cannot evaluate quality.")
+
+        logger.info(
+            "QA GPT request started — transcript length=%d chars", len(transcript)
+        )
+        start = time.perf_counter()
+
+        structured_llm = self._llm.with_structured_output(QualityScore)
+        chain = QA_PROMPT | structured_llm
+
+        try:
+            quality_score: QualityScore = chain.invoke(
+                {
+                    "transcript": transcript,
+                    "customer_issue": summary.customer_issue,
+                    "resolution": summary.resolution,
+                    "customer_sentiment": summary.customer_sentiment,
+                }
+            )
+        except openai.AuthenticationError as exc:
+            raise openai.AuthenticationError(
+                "Invalid OpenAI API key. Check your .env file."
+            ) from exc
+        except openai.APITimeoutError as exc:
+            raise openai.APITimeoutError(
+                "GPT-4o request timed out. Try again."
+            ) from exc
+        except openai.APIConnectionError as exc:
+            raise openai.APIConnectionError(
+                "Network error while contacting OpenAI API."
+            ) from exc
+        except Exception as exc:
+            raise RuntimeError(f"OpenAI API error: {exc}") from exc
+
+        elapsed = time.perf_counter() - start
+        logger.info(
+            "QA GPT response received — overall_score=%.1f, elapsed=%.2fs",
+            quality_score.overall_score,
+            elapsed,
+        )
+        return quality_score

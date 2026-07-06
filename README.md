@@ -159,6 +159,74 @@ CallSense-AI/
 
 ---
 
+## Phase 3.4 — Quality Score Agent
+
+### Purpose
+
+The Quality Score Agent is the fourth node in the pipeline. It reads the transcript and summary from `CallState`, sends both to GPT-4o via LangChain structured output, and writes a validated `QualityScore` Pydantic model back into `CallState`.
+
+### Input
+
+`CallState` containing `transcript` and `summary` populated by the previous agents.
+
+### Output
+
+On success:
+
+| Field | Value |
+|-------|-------|
+| `quality_score` | Validated `QualityScore` Pydantic model |
+| `status` | `ProcessingStatus.PROCESSING` |
+| `error_message` | `None` |
+| `logs` | Log entry appended |
+
+On failure:
+
+| Field | Value |
+|-------|-------|
+| `status` | `ProcessingStatus.FAILED` |
+| `error_message` | Human-readable description |
+| `logs` | Error entry appended |
+
+### Scoring Rubric
+
+| Dimension | Field | Description |
+|-----------|-------|-------------|
+| Empathy | `empathy_score` | Did the agent acknowledge the customer's emotions? |
+| Professionalism | `professionalism_score` | Was the conversation polite and respectful? |
+| Communication Clarity | `communication_clarity_score` | Were responses clear and easy to understand? |
+| Problem Understanding | `problem_understanding_score` | Did the agent correctly identify the issue? |
+| Resolution Quality | `resolution_quality_score` | Was the issue resolved or properly escalated? |
+| Compliance | `compliance_score` | Did the agent follow standard service practices? |
+| Overall | `overall_score` | Holistic quality of the interaction (1.0–10.0) |
+| Feedback | `feedback` | 2–3 sentence narrative for the representative |
+
+### Prompt Design
+
+The system prompt in `prompts/qa_prompt.py` instructs GPT-4o to act as a Senior Call Center Quality Analyst. It provides the full rubric with per-dimension guidance and strict rules against hallucination. The human message passes the transcript plus three key summary fields (`customer_issue`, `resolution`, `customer_sentiment`) as structured context. LangChain's `with_structured_output(QualityScore)` enforces the schema — no manual JSON parsing.
+
+### Error Handling
+
+| Error | Behaviour |
+|-------|-----------|
+| Empty transcript | `ValueError` → FAILED |
+| Missing transcript | `ValueError` → FAILED |
+| Missing or invalid summary | `ValueError` → FAILED |
+| Invalid API key | `AuthenticationError` → FAILED |
+| API timeout | `APITimeoutError` → FAILED |
+| Network error | `APIConnectionError` → FAILED |
+| Structured output validation | `ValueError` → FAILED |
+| Unexpected error | `RuntimeError` → FAILED |
+
+### How to Test
+
+```bash
+# Unit tests (mocked — no API calls)
+pytest tests/test_quality_score_agent.py -v
+```
+
+---
+
 ## Phase 3.3 — Summarization Agent
 
 ### Purpose
