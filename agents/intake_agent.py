@@ -9,7 +9,6 @@ Responsibilities
 - Verify it is a supported format (.mp3, .wav, .m4a, .flac).
 - Validate file size (must be > 0 bytes).
 - Extract file metadata (name, type, size, created time).
-- Populate CallMetadata and update CallState.
 """
 
 from __future__ import annotations
